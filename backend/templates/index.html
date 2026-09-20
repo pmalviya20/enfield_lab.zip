@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#B3141C">
+<title>Enfield Lab</title>
+<link rel="icon" href="/static/img/logo_transparent.png">
+<link rel="apple-touch-icon" href="/static/img/logo.jpg">
+<link rel="manifest" href="/static/manifest.webmanifest">
+<link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+
+<!-- ===================== LOGIN SCREEN ===================== -->
+<div id="login-screen" class="login-screen">
+  <div class="login-card">
+    <img src="/static/img/logo_transparent.png" class="login-logo" alt="Enfield Lab">
+    <h1>Enfield Lab</h1>
+    <p class="login-tagline">By The Rider &middot; For The Rider &middot; From The Rider</p>
+    <form id="login-form">
+      <label>Username
+        <input type="text" id="login-username" autocomplete="username" required>
+      </label>
+      <label>Password
+        <input type="password" id="login-password" autocomplete="current-password" required>
+      </label>
+      <div id="login-error" class="form-error" hidden></div>
+      <button type="submit" class="btn btn-primary btn-block">Log In</button>
+    </form>
+  </div>
+</div>
+
+<!-- ===================== APP SHELL ===================== -->
+<div id="app-shell" class="app-shell" hidden>
+
+  <!-- Backdrop for drawer -->
+  <div id="drawer-backdrop" class="drawer-backdrop"></div>
+
+  <!-- Left drawer -->
+  <nav id="drawer" class="drawer">
+    <div class="drawer-header">
+      <img src="/static/img/logo_transparent.png" class="drawer-logo" alt="">
+      <div>
+        <div class="drawer-title">Enfield Lab</div>
+        <div class="drawer-subtitle">By The Rider</div>
+      </div>
+    </div>
+    <ul class="drawer-nav">
+      <li><a href="#/dashboard" data-route="dashboard"><span class="nav-icon">&#8862;</span>Dashboard</a></li>
+      <li><a href="#/billing" data-route="billing"><span class="nav-icon">&#8863;</span>Billing</a></li>
+      <li><a href="#/inventory" data-route="inventory"><span class="nav-icon">&#9881;</span>Inventory</a></li>
+      <li><a href="#/customers" data-route="customers"><span class="nav-icon">&#9786;</span>Customers</a></li>
+      <li><a href="#/reports" data-route="reports"><span class="nav-icon">&#9776;</span>Reports</a></li>
+      <li><a href="#/settings" data-route="settings"><span class="nav-icon">&#9881;</span>Settings</a></li>
+    </ul>
+    <div class="drawer-footer">
+      <button id="logout-btn" class="btn btn-ghost btn-block">Log Out</button>
+    </div>
+  </nav>
+
+  <!-- Top bar -->
+  <header class="topbar">
+    <button id="burger-btn" class="burger-btn" aria-label="Open menu">
+      <span></span><span></span><span></span>
+    </button>
+    <div class="topbar-title" id="topbar-title">Dashboard</div>
+    <div class="topbar-spacer"></div>
+  </header>
+
+  <!-- Main content: one <section> per route, toggled via .active -->
+  <main class="main-content">
+
+    <section id="view-dashboard" class="view">
+      <div class="tiles-grid">
+        <div class="tile tile-red">
+          <div class="tile-label">Sales This Month</div>
+          <div class="tile-value" id="tile-sales">&#8377;0</div>
+        </div>
+        <div class="tile tile-black">
+          <div class="tile-label">Outstanding Receivables</div>
+          <div class="tile-value" id="tile-outstanding">&#8377;0</div>
+        </div>
+        <div class="tile tile-amber">
+          <div class="tile-label">Low Stock Items</div>
+          <div class="tile-value" id="tile-lowstock">0</div>
+        </div>
+        <div class="tile tile-slate">
+          <div class="tile-label">Total Customers</div>
+          <div class="tile-value" id="tile-customers">0</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">Recent Invoices</div>
+        <div class="table-wrap">
+          <table class="data-table" id="recent-invoices-table">
+            <thead><tr><th>Invoice</th><th>Customer</th><th>Date</th><th>Total</th><th>Status</th><th></th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <section id="view-billing" class="view">
+      <div class="view-toolbar">
+        <input type="search" id="invoice-search" class="input" placeholder="Search invoices...">
+        <button class="btn btn-primary" id="new-invoice-btn">+ New Invoice</button>
+      </div>
+      <div class="card">
+        <div class="table-wrap">
+          <table class="data-table" id="invoices-table">
+            <thead><tr><th>Invoice</th><th>Customer</th><th>Date</th><th>Total</th><th>Paid</th><th>Status</th><th>Actions</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <section id="view-inventory" class="view">
+      <div class="view-toolbar">
+        <input type="search" id="inventory-search" class="input" placeholder="Search part no, name, model...">
+        <button class="btn btn-outline" id="scan-add-btn">Scan to Add</button>
+        <button class="btn btn-outline" id="upload-invoice-btn">Upload Purchase Invoice</button>
+        <button class="btn btn-primary" id="add-item-btn">+ Add Item</button>
+        <input type="file" id="purchase-invoice-file" accept="application/pdf" hidden>
+      </div>
+      <div id="upload-result" class="banner" hidden></div>
+      <div class="card">
+        <div class="table-wrap">
+          <table class="data-table" id="inventory-table">
+            <thead><tr><th>Part No</th><th>Description</th><th>RE Model</th><th>MRP</th><th>Rate</th><th>GST%</th><th>Stock</th><th></th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <section id="view-customers" class="view">
+      <div class="view-toolbar">
+        <input type="search" id="customer-search" class="input" placeholder="Search name, phone, reg no...">
+        <button class="btn btn-primary" id="add-customer-btn">+ Add Customer</button>
+      </div>
+      <div class="card">
+        <div class="table-wrap">
+          <table class="data-table" id="customers-table">
+            <thead><tr><th>Name</th><th>Phone</th><th>Bike</th><th>Invoices</th><th>Outstanding</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <section id="view-reports" class="view">
+      <div class="view-toolbar">
+        <label class="date-label">From <input type="date" id="report-from" class="input"></label>
+        <label class="date-label">To <input type="date" id="report-to" class="input"></label>
+        <button class="btn btn-outline" data-preset="30">Last 30 Days</button>
+        <button class="btn btn-outline" data-preset="month">This Month</button>
+        <button class="btn btn-outline" data-preset="year">This Year</button>
+      </div>
+
+      <div class="tiles-grid">
+        <div class="tile tile-red"><div class="tile-label">Total Sales</div><div class="tile-value" id="rep-total-sales">&#8377;0</div></div>
+        <div class="tile tile-black"><div class="tile-label">Invoices</div><div class="tile-value" id="rep-invoice-count">0</div></div>
+        <div class="tile tile-amber"><div class="tile-label">GST Collected</div><div class="tile-value" id="rep-gst">&#8377;0</div></div>
+        <div class="tile tile-slate"><div class="tile-label">Amount Collected</div><div class="tile-value" id="rep-collected">&#8377;0</div></div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">Sales By Day</div>
+        <div id="sales-chart" class="chart"></div>
+      </div>
+
+      <div class="reports-grid">
+        <div class="card">
+          <div class="card-header">Top Selling Parts</div>
+          <div class="table-wrap">
+            <table class="data-table" id="top-parts-table">
+              <thead><tr><th>Part</th><th>Qty Sold</th><th>Revenue</th></tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-header">Top Customers</div>
+          <div class="table-wrap">
+            <table class="data-table" id="top-customers-table">
+              <thead><tr><th>Customer</th><th>Invoices</th><th>Revenue</th></tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="view-settings" class="view">
+      <div class="card">
+        <div class="card-header">Business Profile (printed on invoices)</div>
+        <form id="profile-form" class="form-grid">
+          <label>Business Name<input type="text" name="business_name" class="input"></label>
+          <label>Tagline<input type="text" name="tagline" class="input"></label>
+          <label class="full">Address<textarea name="address" class="input" rows="2"></textarea></label>
+          <label>Phone<input type="text" name="phone" class="input"></label>
+          <label>Email<input type="email" name="email" class="input"></label>
+          <label>GSTIN<input type="text" name="gstin" class="input"></label>
+          <label>Invoice Prefix<input type="text" name="invoice_prefix" class="input"></label>
+          <label>Default GST %<input type="number" step="0.01" name="default_gst_percent" class="input"></label>
+          <label>Low Stock Threshold<input type="number" name="low_stock_threshold" class="input"></label>
+          <label>Bank Name<input type="text" name="bank_name" class="input"></label>
+          <label>Account No<input type="text" name="bank_account_no" class="input"></label>
+          <label>IFSC<input type="text" name="bank_ifsc" class="input"></label>
+          <div class="full"><button type="submit" class="btn btn-primary">Save Profile</button></div>
+        </form>
+      </div>
+
+      <div class="card">
+        <div class="card-header">Change Password</div>
+        <form id="password-form" class="form-grid">
+          <label>Current Password<input type="password" name="current_password" class="input" required></label>
+          <label>New Password<input type="password" name="new_password" class="input" required></label>
+          <div class="full"><button type="submit" class="btn btn-primary">Update Password</button></div>
+        </form>
+      </div>
+
+      <div class="card">
+        <div class="card-header">Recent Activity</div>
+        <div class="table-wrap">
+          <table class="data-table" id="activity-table">
+            <thead><tr><th>When</th><th>Type</th><th>Action</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<!-- ===================== MODALS ===================== -->
+<div id="modal-root"></div>
+<div id="toast" class="toast" hidden></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@zxing/library@0.21.3/umd/index.min.js"></script>
+<script src="/static/js/app.js"></script>
+</body>
+</html>
