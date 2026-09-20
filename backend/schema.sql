@@ -152,8 +152,8 @@ CREATE TABLE IF NOT EXISTS activity_log (
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
--- Google-authenticated logins. Any Google account can request access; an
--- admin must approve it in Settings before it can be used to log in.
+-- Google-authenticated logins. Any Google account can request sign-in
+-- access, and an admin must approve it in Settings before it can be used.
 CREATE TABLE IF NOT EXISTS google_accounts (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     email TEXT UNIQUE NOT NULL,

@@ -84,10 +84,19 @@ def query(sql, params=()):
     conn = get_conn()
     sql2 = sql if ENGINE == "sqlite" else _qmark_to_pyformat(sql)
     cur = conn.cursor()
-    cur.execute(sql2, params)
-    rows = cur.fetchall()
-    result = _rows_to_dicts(cur, rows)
-    cur.close()
+    try:
+        cur.execute(sql2, params)
+        rows = cur.fetchall()
+        result = _rows_to_dicts(cur, rows)
+    except Exception:
+        # Without this, a single failed statement leaves a Postgres
+        # connection "aborted" - every later query on this same persistent
+        # per-thread connection would then fail too, until the process
+        # restarts. Roll back immediately so the connection stays usable.
+        conn.rollback()
+        raise
+    finally:
+        cur.close()
     return result
 
 
@@ -101,10 +110,15 @@ def execute(sql, params=()):
     conn = get_conn()
     sql2 = sql if ENGINE == "sqlite" else _qmark_to_pyformat(sql)
     cur = conn.cursor()
-    cur.execute(sql2, params)
-    conn.commit()
-    rc = cur.rowcount
-    cur.close()
+    try:
+        cur.execute(sql2, params)
+        conn.commit()
+        rc = cur.rowcount
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        cur.close()
     return rc
 
 
@@ -113,20 +127,30 @@ def insert_and_get_id(sql, params=()):
     conn = get_conn()
     if ENGINE == "sqlite":
         cur = conn.cursor()
-        cur.execute(sql, params)
-        conn.commit()
-        new_id = cur.lastrowid
-        cur.close()
+        try:
+            cur.execute(sql, params)
+            conn.commit()
+            new_id = cur.lastrowid
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            cur.close()
         return new_id
     else:
         sql2 = _qmark_to_pyformat(sql)
         if "RETURNING" not in sql2.upper():
             sql2 = sql2.rstrip().rstrip(";") + " RETURNING id"
         cur = conn.cursor()
-        cur.execute(sql2, params)
-        new_id = cur.fetchone()[0]
-        conn.commit()
-        cur.close()
+        try:
+            cur.execute(sql2, params)
+            new_id = cur.fetchone()[0]
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            cur.close()
         return new_id
 
 
@@ -134,9 +158,14 @@ def executemany(sql, seq_of_params):
     conn = get_conn()
     sql2 = sql if ENGINE == "sqlite" else _qmark_to_pyformat(sql)
     cur = conn.cursor()
-    cur.executemany(sql2, seq_of_params)
-    conn.commit()
-    cur.close()
+    try:
+        cur.executemany(sql2, seq_of_params)
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        cur.close()
 
 
 def init_db():
@@ -152,17 +181,26 @@ def init_db():
         conn.commit()
     else:
         cur = conn.cursor()
-        # Split on ";" at statement boundaries - our schema has no ";" inside strings.
-        statements = [s.strip() for s in script.split(";") if s.strip()]
+        # Strip full-line "--" comments before splitting on ";" - a semicolon
+        # anywhere in a comment's prose (e.g. "an admin must approve it; and
+        # ...") would otherwise be mistaken for a statement boundary and
+        # corrupt the next CREATE TABLE. This is a naive splitter, not a real
+        # SQL parser, so schema comments must stay on their own "--" lines.
+        cleaned_lines = [line for line in script.splitlines() if not line.strip().startswith("--")]
+        cleaned_script = "\n".join(cleaned_lines)
+        statements = [s.strip() for s in cleaned_script.split(";") if s.strip()]
         for stmt in statements:
             try:
                 cur.execute(stmt)
-            except Exception:
+            except Exception as e:
                 # Multiple gunicorn workers can race to create tables on the
                 # very first deploy; "already exists" from a concurrent
                 # CREATE TABLE/INDEX IF NOT EXISTS is harmless - roll back
-                # just this statement and continue.
+                # just this statement and continue. Logged (not silenced) so
+                # a genuine schema bug shows up in the Render logs instead of
+                # silently leaving a table missing.
                 conn.rollback()
+                print(f"[init_db] skipping statement due to: {e}\n  statement: {stmt[:200]}")
         conn.commit()
         cur.close()
 
