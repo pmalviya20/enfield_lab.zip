@@ -8,7 +8,13 @@ import db
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # Routes that don't require a logged-in session.
-PUBLIC_PATHS = {"/api/login", "/api/health"}
+PUBLIC_PATHS = {
+    "/api/login",
+    "/api/health",
+    "/api/auth/google/status",
+    "/api/auth/google/login",
+    "/api/auth/google/callback",
+}
 PUBLIC_PREFIXES = ("/static/", "/api/public/")
 
 
@@ -44,7 +50,7 @@ def create_app():
         path = request.path
         if path in PUBLIC_PATHS or path.startswith(PUBLIC_PREFIXES) or not path.startswith("/api/"):
             return None
-        if not session.get("user_id"):
+        if not (session.get("user_id") or session.get("google_account_id")):
             return jsonify({"error": "not_authenticated"}), 401
         return None
 

@@ -46,12 +46,14 @@
   /* ============================== Auth / bootstrap ============================== */
   const loginScreen = document.getElementById("login-screen");
   const appShell = document.getElementById("app-shell");
+  let currentUser = null;
 
   async function boot() {
     try {
-      await api("/api/me");
+      currentUser = await api("/api/me");
       showApp();
     } catch (e) {
+      currentUser = null;
       showLogin();
     }
   }
@@ -88,6 +90,35 @@
     location.hash = "";
     showLogin();
   });
+
+  async function checkGoogleStatus() {
+    try {
+      const status = await api("/api/auth/google/status");
+      document.getElementById("google-signin-wrap").hidden = !status.enabled;
+    } catch (e) {
+      // Feature not configured yet - leave the button hidden.
+    }
+  }
+
+  function showGoogleMessageFromUrl() {
+    const params = new URLSearchParams(location.search);
+    const g = params.get("google");
+    if (!g) return;
+    const messages = {
+      pending: "Thanks! Your Google sign-in request was sent to the admin for approval. You'll be able to log in once it's approved.",
+      error: "Google sign-in didn't work. Please try again, or use your username and password.",
+      unverified: "That Google account's email isn't verified, so it can't be used to sign in.",
+    };
+    const box = document.getElementById("google-status-msg");
+    if (messages[g]) {
+      box.textContent = messages[g];
+      box.hidden = false;
+    }
+    history.replaceState({}, "", location.pathname + location.hash);
+  }
+
+  checkGoogleStatus();
+  showGoogleMessageFromUrl();
 
   /* ============================== Drawer (swipe + burger) ============================== */
   const drawer = document.getElementById("drawer");
@@ -895,6 +926,9 @@
 
   /* ============================== SETTINGS ============================== */
   async function loadSettings() {
+    const passwordCard = document.getElementById("password-form").closest(".card");
+    passwordCard.hidden = currentUser && currentUser.auth_type === "google";
+
     const profile = await api("/api/settings/profile");
     const form = document.getElementById("profile-form");
     Object.keys(profile).forEach((k) => {
@@ -908,7 +942,64 @@
         <td>${escapeHtml((a.created_at || "").replace("T", " ").slice(0, 19))}</td>
         <td>${escapeHtml(a.entity_type)}</td><td>${escapeHtml(a.action)}</td></tr>`).join("")
       || '<tr><td colspan="3" style="color:#888;">No activity yet</td></tr>';
+
+    await loadGoogleAccounts();
   }
+
+  async function loadGoogleAccounts() {
+    let data;
+    try {
+      data = await api("/api/settings/google-accounts");
+    } catch (e) {
+      return;
+    }
+    const pendingBody = document.querySelector("#google-pending-table tbody");
+    pendingBody.innerHTML = data.pending.map((a) => `<tr>
+        <td>${escapeHtml(a.email)}</td>
+        <td>${escapeHtml(a.name || "")}</td>
+        <td>${escapeHtml((a.created_at || "").replace("T", " ").slice(0, 19))}</td>
+        <td>
+          <button class="btn btn-sm btn-primary google-approve-btn" data-id="${a.id}">Approve</button>
+          <button class="btn btn-sm btn-danger google-reject-btn" data-id="${a.id}">Reject</button>
+        </td>
+      </tr>`).join("") || '<tr><td colspan="4" style="color:#888;">No pending requests</td></tr>';
+
+    const approvedBody = document.querySelector("#google-approved-table tbody");
+    approvedBody.innerHTML = data.approved.map((a) => `<tr>
+        <td>${escapeHtml(a.email)}</td>
+        <td>${escapeHtml(a.name || "")}</td>
+        <td>${escapeHtml((a.approved_at || "").replace("T", " ").slice(0, 19))}</td>
+        <td><button class="btn btn-sm btn-danger google-revoke-btn" data-id="${a.id}">Revoke</button></td>
+      </tr>`).join("") || '<tr><td colspan="4" style="color:#888;">No approved accounts yet</td></tr>';
+  }
+
+  document.getElementById("google-pending-table").addEventListener("click", async (e) => {
+    const approveBtn = e.target.closest(".google-approve-btn");
+    const rejectBtn = e.target.closest(".google-reject-btn");
+    if (approveBtn) {
+      try {
+        await api(`/api/settings/google-accounts/${approveBtn.dataset.id}/approve`, { method: "POST" });
+        showToast("Approved - they can now log in with Google");
+        loadGoogleAccounts();
+      } catch (err) { showToast(err.message, true); }
+    } else if (rejectBtn) {
+      try {
+        await api(`/api/settings/google-accounts/${rejectBtn.dataset.id}`, { method: "DELETE" });
+        showToast("Request rejected");
+        loadGoogleAccounts();
+      } catch (err) { showToast(err.message, true); }
+    }
+  });
+
+  document.getElementById("google-approved-table").addEventListener("click", async (e) => {
+    const revokeBtn = e.target.closest(".google-revoke-btn");
+    if (!revokeBtn) return;
+    try {
+      await api(`/api/settings/google-accounts/${revokeBtn.dataset.id}`, { method: "DELETE" });
+      showToast("Access revoked");
+      loadGoogleAccounts();
+    } catch (err) { showToast(err.message, true); }
+  });
 
   document.getElementById("profile-form").addEventListener("submit", async (e) => {
     e.preventDefault();

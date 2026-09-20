@@ -146,7 +146,20 @@ CREATE TABLE IF NOT EXISTS activity_log (
     created_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
 
+-- Google-authenticated logins. Any Google account can request access; an
+-- admin must approve it in Settings before it can be used to log in.
+CREATE TABLE IF NOT EXISTS google_accounts (
+    id SERIAL PRIMARY KEY,
+    email TEXT UNIQUE NOT NULL,
+    name TEXT,
+    google_sub TEXT,
+    is_approved INTEGER NOT NULL DEFAULT 0,
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    approved_at TIMESTAMP
+);
+
 CREATE INDEX IF NOT EXISTS idx_inventory_part_no ON inventory_items(part_no);
+CREATE INDEX IF NOT EXISTS idx_google_accounts_email ON google_accounts(email);
 CREATE INDEX IF NOT EXISTS idx_purchase_invoice_items_invoice ON purchase_invoice_items(purchase_invoice_id);
 CREATE INDEX IF NOT EXISTS idx_sales_invoice_items_invoice ON sales_invoice_items(sales_invoice_id);
 CREATE INDEX IF NOT EXISTS idx_sales_invoices_customer ON sales_invoices(customer_id);
