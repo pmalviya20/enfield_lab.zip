@@ -665,6 +665,8 @@
         </div>
         <div class="field"><label>Barcode / QR (optional)</label><input type="text" class="input" id="i-barcode" value="${escapeHtml(p.barcode || "")}"></div>
         ${p.raw_text_hint ? `<p style="font-size:12px;color:#888;">Auto-filled from label photo - please double-check before saving.</p>` : ""}
+        ${p.raw_text ? `<div class="field"><label>Everything OCR could read off the label (copy from here if a field above is wrong or blank)</label>
+          <textarea class="input" id="i-ocr-raw" rows="4" readonly onclick="this.select()" style="font-family:monospace;font-size:12px;">${escapeHtml(p.raw_text)}</textarea></div>` : ""}
       `,
       footerHtml: `<button class="btn btn-outline" id="i-cancel">Cancel</button><button class="btn btn-primary" id="i-save">Save Item</button>`,
       onMount(modal, close) {
@@ -770,8 +772,9 @@
   function openOcrCaptureModal(scannedCode) {
     openModal({
       title: "New Part - Capture Label",
-      bodyHtml: `<p>Code <b>${escapeHtml(scannedCode)}</b> isn't in inventory yet. Take a clear photo of the label
-        (the side printed with PART NO / MRP) and we'll try to auto-fill the details.</p>
+      bodyHtml: `<p>Code <b>${escapeHtml(scannedCode)}</b> isn't in inventory yet. Take a clear, well-lit photo of
+        the label (the side printed with PART NO / MRP), filling as much of the frame as possible with no glare,
+        and we'll try to auto-fill the details.</p>
         <input type="file" accept="image/*" capture="environment" id="ocr-photo" class="input">
         <p id="ocr-status" style="font-size:13px;color:#888;margin-top:8px;"></p>`,
       footerHtml: `<button class="btn btn-outline" id="ocr-skip">Enter Manually</button>`,
@@ -780,11 +783,24 @@
         modal.querySelector("#ocr-photo").addEventListener("change", async (e) => {
           const file = e.target.files[0];
           if (!file) return;
-          modal.querySelector("#ocr-status").textContent = "Reading label...";
+          const status = modal.querySelector("#ocr-status");
+          const photoInput = modal.querySelector("#ocr-photo");
+          status.style.color = "#888";
+          status.textContent = "Reading label...";
           const fd = new FormData();
           fd.append("photo", file);
           try {
             const result = await api("/api/inventory/scan-ocr", { method: "POST", body: fd });
+            const foundSomething = result.part_no || result.mrp || (result.raw_text || "").trim().length > 15;
+            if (!foundSomething) {
+              // Don't just give up here - let them try another shot of the
+              // same label without losing their place in the flow.
+              status.style.color = "#d92d20";
+              status.textContent = "Couldn't make out Part No / MRP in that photo. Try again with more light, "
+                + "less glare, and the label filling more of the frame - or enter details manually below.";
+              photoInput.value = "";
+              return;
+            }
             close();
             openAddItemModal({
               part_no: result.part_no || scannedCode,
@@ -792,9 +808,12 @@
               mrp: result.mrp || 0,
               barcode: scannedCode,
               raw_text_hint: true,
+              raw_text: result.raw_text || "",
             });
           } catch (err) {
-            modal.querySelector("#ocr-status").textContent = "Couldn't read the label - please enter details manually.";
+            status.style.color = "#d92d20";
+            status.textContent = "Couldn't read the label - please try another photo or enter details manually.";
+            photoInput.value = "";
           }
         });
       },

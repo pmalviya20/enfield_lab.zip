@@ -124,6 +124,37 @@ def delete_item(item_id):
     return jsonify({"ok": True})
 
 
+def _ocr_variants(img):
+    """Build a few different preprocessed versions of the same photo.
+    Real-world label photos vary a lot (glare on the plastic/foil label,
+    uneven lighting, low-contrast print, slight blur) and no single filter
+    is best for all of them, so we try several and keep whichever one's OCR
+    output actually contains recognizable fields."""
+    from PIL import ImageOps, ImageFilter
+
+    gray = ImageOps.grayscale(img)
+    gray = ImageOps.autocontrast(gray, cutoff=1)
+    sharp = gray.filter(ImageFilter.UnsharpMask(radius=2, percent=150, threshold=3))
+    # Simple binarization - helps a lot on labels with a busy/shiny background,
+    # hurts on some others, which is exactly why it's tried as one option
+    # among several rather than applied unconditionally.
+    bw = sharp.point(lambda p: 255 if p > 150 else 0)
+    return {"sharp_gray": sharp, "bw": bw, "plain_gray": gray}
+
+
+def _score_ocr_text(text):
+    import re
+    score = 0.0
+    if re.search(r"PART\s*NO", text, re.IGNORECASE):
+        score += 2
+    if re.search(r"MRP", text, re.IGNORECASE):
+        score += 2
+    if re.search(r"NET\s*QTY", text, re.IGNORECASE):
+        score += 1
+    score += min(len(text.strip()), 200) / 200.0
+    return score
+
+
 @bp.route("/api/inventory/scan-ocr", methods=["POST"])
 def scan_ocr():
     """Fallback for a part that has no reliable barcode payload: OCR the
@@ -131,28 +162,44 @@ def scan_ocr():
     printed on Royal Enfield genuine-parts labels."""
     import re
     import pytesseract
-    from PIL import Image
+    from PIL import Image, ImageOps
     import io
 
     if "photo" not in request.files:
         return jsonify({"error": "photo file is required"}), 400
 
-    img = Image.open(io.BytesIO(request.files["photo"].read())).convert("RGB")
+    raw = Image.open(io.BytesIO(request.files["photo"].read()))
+    raw = ImageOps.exif_transpose(raw)  # respect the phone's camera orientation
+    img = raw.convert("RGB")
+
     # Upscale small phone crops a bit - helps tesseract with small label fonts.
     w, h = img.size
-    if max(w, h) < 1600:
-        scale = 1600 / max(w, h)
-        img = img.resize((int(w * scale), int(h * scale)))
+    if max(w, h) < 1800:
+        scale = 1800 / max(w, h)
+        img = img.resize((int(w * scale), int(h * scale)), Image.LANCZOS)
 
-    text = pytesseract.image_to_string(img)
+    configs = ["--oem 3 --psm 6", "--oem 3 --psm 4", "--oem 3 --psm 11"]
+    best_text, best_score = "", -1.0
+    for variant in _ocr_variants(img).values():
+        for cfg in configs:
+            try:
+                text = pytesseract.image_to_string(variant, config=cfg)
+            except Exception:
+                continue
+            if not text.strip():
+                continue
+            score = _score_ocr_text(text)
+            if score > best_score:
+                best_score, best_text = score, text
 
-    result = {"raw_text": text}
+    text = best_text
+    result = {"raw_text": text.strip()}
 
-    part_no_match = re.search(r"PART\s*NO[:\s]*([A-Z0-9/\-]{4,})", text, re.IGNORECASE)
+    part_no_match = re.search(r"PART\s*NO[.:\s]*([A-Z0-9/\-]{4,})", text, re.IGNORECASE)
     if part_no_match:
         result["part_no"] = part_no_match.group(1).strip().rstrip(".").upper()
 
-    desc_match = re.search(r"PART\s*NO[:\s]*[A-Z0-9/\-]{4,}\s*\n?([A-Z0-9 \-]{4,})", text, re.IGNORECASE)
+    desc_match = re.search(r"PART\s*NO[.:\s]*[A-Z0-9/\-]{4,}\s*\n?([A-Za-z0-9 \-]{4,})", text, re.IGNORECASE)
     if desc_match:
         result["description"] = desc_match.group(1).strip().title()
 
