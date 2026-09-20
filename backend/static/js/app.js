@@ -227,7 +227,13 @@
   window.addEventListener("hashchange", router);
 
   /* ============================== Generic modal helper ============================== */
-  function openModal({ title, bodyHtml, footerHtml, onMount, wide }) {
+  // onClose (optional) runs exactly once no matter how the modal is closed -
+  // X button, backdrop click, or a programmatic close() call from onMount.
+  // Any modal that acquires a live resource (camera stream, a document-level
+  // listener, a timer) MUST release it here - this is the one place that's
+  // guaranteed to run, so cleanup can't be accidentally skipped by whichever
+  // close path the user happens to use.
+  function openModal({ title, bodyHtml, footerHtml, onMount, onClose, wide }) {
     const root = document.getElementById("modal-root");
     const overlay = document.createElement("div");
     overlay.className = "modal-overlay";
@@ -238,7 +244,13 @@
         ${footerHtml ? `<div class="modal-footer">${footerHtml}</div>` : ""}
       </div>`;
     root.appendChild(overlay);
-    const close = () => overlay.remove();
+    let closed = false;
+    const close = () => {
+      if (closed) return;
+      closed = true;
+      if (onClose) { try { onClose(); } catch (e) { /* cleanup errors must never block closing */ } }
+      overlay.remove();
+    };
     overlay.querySelector(".modal-close").addEventListener("click", close);
     overlay.addEventListener("click", (e) => { if (e.target === overlay) close(); });
     if (onMount) onMount(overlay, close);
@@ -247,7 +259,8 @@
 
   /* ============================== Barcode / QR scanner ============================== */
   function openScanner(onDecode, hint) {
-    const { overlay, close } = openModal({
+    let codeReader = null;
+    openModal({
       title: "Scan Barcode / QR",
       bodyHtml: `
         <div class="scanner-wrap"><video id="scanner-video" playsinline muted></video><div class="scan-frame"></div></div>
@@ -258,38 +271,35 @@
             <button class="btn btn-outline" id="manual-code-go">Use</button>
           </div>
         </div>`,
-    });
-    let codeReader = null;
-    let stopped = false;
-    const stop = () => {
-      if (stopped) return;
-      stopped = true;
-      try { codeReader && codeReader.reset(); } catch (e) {}
-    };
-    const finish = (code) => { stop(); close(); onDecode(code); };
+      // This is the fix for the camera being left running (and the app
+      // slowing to a crawl after a few scans): previously the camera was
+      // only released if you tapped the X specifically. Closing via the
+      // backdrop, or any other path, left decodeFromVideoDevice's loop and
+      // the getUserMedia stream running forever in the background.
+      onClose: () => { try { codeReader && codeReader.reset(); } catch (e) {} },
+      onMount(overlay, close) {
+        overlay.querySelector("#manual-code-go").addEventListener("click", () => {
+          const v = overlay.querySelector("#manual-code").value.trim();
+          if (v) { close(); onDecode(v); }
+        });
+        overlay.querySelector("#manual-code").addEventListener("keydown", (e) => {
+          if (e.key === "Enter") { e.preventDefault(); overlay.querySelector("#manual-code-go").click(); }
+        });
 
-    overlay.querySelector(".modal-close").addEventListener("click", stop);
-    overlay.querySelector("#manual-code-go").addEventListener("click", () => {
-      const v = overlay.querySelector("#manual-code").value.trim();
-      if (v) finish(v);
+        try {
+          if (typeof ZXing === "undefined") throw new Error("Scanner library not loaded");
+          codeReader = new ZXing.BrowserMultiFormatReader();
+          const videoEl = overlay.querySelector("#scanner-video");
+          codeReader.decodeFromVideoDevice(undefined, videoEl, (result) => {
+            if (result) { close(); onDecode(result.getText()); }
+          }).catch(() => {
+            showToast("Camera unavailable - type the code instead", true);
+          });
+        } catch (e) {
+          showToast("Scanner unavailable on this device - type the code instead", true);
+        }
+      },
     });
-    overlay.querySelector("#manual-code").addEventListener("keydown", (e) => {
-      if (e.key === "Enter") { e.preventDefault(); overlay.querySelector("#manual-code-go").click(); }
-    });
-
-    try {
-      if (typeof ZXing === "undefined") throw new Error("Scanner library not loaded");
-      codeReader = new ZXing.BrowserMultiFormatReader();
-      const videoEl = overlay.querySelector("#scanner-video");
-      codeReader.decodeFromVideoDevice(undefined, videoEl, (result, err) => {
-        if (stopped) return;
-        if (result) finish(result.getText());
-      }).catch((e) => {
-        showToast("Camera unavailable - type the code instead", true);
-      });
-    } catch (e) {
-      showToast("Scanner unavailable on this device - type the code instead", true);
-    }
   }
 
   /* ============================== WhatsApp share ============================== */
@@ -392,9 +402,13 @@
     let selectedCustomer = null;
     let lineItems = []; // { inventory_item_id, description, part_no, qty, rate, gst_percent }
 
+    const documentListeners = [];
+    function onDocClick(fn) { documentListeners.push(fn); document.addEventListener("click", fn); }
+
     openModal({
       title: "New Invoice",
       wide: true,
+      onClose: () => { documentListeners.forEach((fn) => document.removeEventListener("click", fn)); },
       bodyHtml: `
         <div class="field">
           <label>Customer</label>
@@ -454,7 +468,7 @@
         }
         custInput.addEventListener("focus", () => renderCustomerList(custInput.value));
         custInput.addEventListener("input", () => { selectedCustomer = null; renderCustomerList(custInput.value); });
-        document.addEventListener("click", (e) => { if (!modal.contains(e.target)) return; if (!e.target.closest("#customer-combobox")) custList.hidden = true; });
+        onDocClick((e) => { if (!modal.contains(e.target)) return; if (!e.target.closest("#customer-combobox")) custList.hidden = true; });
 
         modal.querySelector("#add-customer-inline-btn").addEventListener("click", () => {
           openAddCustomerModal((newCust) => {
@@ -464,26 +478,44 @@
           });
         });
 
+        function addNewItemToInvoice(prefill) {
+          // Lets a part that isn't in inventory yet be created AND added as a
+          // line item without ever leaving the Billing screen.
+          openAddItemModal(prefill, (newItem) => {
+            inventoryCache.push(newItem);
+            addLine({ inventory_item_id: newItem.id, description: newItem.description, part_no: newItem.part_no, qty: 1, rate: newItem.rate, gst_percent: newItem.gst_percent });
+            showToast(`${newItem.part_no} added to inventory and to this invoice`);
+          });
+        }
+
         const itemInput = modal.querySelector("#item-input");
         const itemList = modal.querySelector("#item-list");
         function renderItemList(filter) {
           const q = (filter || "").toLowerCase();
           const matches = inventoryCache.filter((it) => !q || it.part_no.toLowerCase().includes(q) || it.description.toLowerCase().includes(q));
-          itemList.innerHTML = matches.length
+          const addNewRow = `<div data-add-new="1" class="combobox-add-new">+ Add "${escapeHtml(filter || "new part")}" to inventory</div>`;
+          itemList.innerHTML = (matches.length
             ? matches.slice(0, 30).map((it) => `<div data-id="${it.id}">${escapeHtml(it.part_no)} - ${escapeHtml(it.description)} <span style="color:#888">(stock ${fmtNum(it.stock_qty)})</span></div>`).join("")
-            : `<div class="empty">No matching parts</div>`;
+            : `<div class="empty">No matching parts</div>`) + (q ? addNewRow : "");
           itemList.hidden = false;
         }
         itemInput.addEventListener("focus", () => renderItemList(itemInput.value));
         itemInput.addEventListener("input", () => renderItemList(itemInput.value));
         itemList.addEventListener("click", (e) => {
+          const addNewDiv = e.target.closest("[data-add-new]");
+          if (addNewDiv) {
+            const q = itemInput.value.trim();
+            itemInput.value = ""; itemList.hidden = true;
+            addNewItemToInvoice({ part_no: q, description: q });
+            return;
+          }
           const div = e.target.closest("[data-id]");
           if (!div) return;
           const it = inventoryCache.find((x) => String(x.id) === div.dataset.id);
           addLine({ inventory_item_id: it.id, description: it.description, part_no: it.part_no, qty: 1, rate: it.rate, gst_percent: it.gst_percent });
           itemInput.value = ""; itemList.hidden = true;
         });
-        document.addEventListener("click", (e) => { if (!modal.contains(e.target)) return; if (!e.target.closest("#item-combobox")) itemList.hidden = true; });
+        onDocClick((e) => { if (!modal.contains(e.target)) return; if (!e.target.closest("#item-combobox")) itemList.hidden = true; });
 
         modal.querySelector("#scan-line-item-btn").addEventListener("click", () => {
           openScanner(async (code) => {
@@ -493,7 +525,13 @@
                 addLine({ inventory_item_id: result.item.id, description: result.item.description, part_no: result.item.part_no, qty: 1, rate: result.item.rate, gst_percent: result.item.gst_percent });
                 showToast(`Added ${result.item.part_no} to invoice`);
               } else {
-                showToast(`Code "${code}" not found in inventory - add it from the Inventory screen first`, true);
+                // Not in inventory yet - capture the label right here instead
+                // of sending the user off to the Inventory screen.
+                openOcrCaptureModal(code, (newItem) => {
+                  inventoryCache.push(newItem);
+                  addLine({ inventory_item_id: newItem.id, description: newItem.description, part_no: newItem.part_no, qty: 1, rate: newItem.rate, gst_percent: newItem.gst_percent });
+                  showToast(`${newItem.part_no} added to inventory and to this invoice`);
+                });
               }
             } catch (e) { showToast(e.message, true); }
           });
@@ -628,10 +666,11 @@
     inventoryCache = data.items;
     const tbody = document.querySelector("#inventory-table tbody");
     tbody.innerHTML = "";
-    data.items.forEach((it) => {
+    document.getElementById("inventory-count").textContent = `${data.items.length} part${data.items.length === 1 ? "" : "s"}`;
+    data.items.forEach((it, idx) => {
       const low = it.stock_qty <= data.low_stock_threshold;
       const tr = document.createElement("tr");
-      tr.innerHTML = `<td>${escapeHtml(it.part_no)}</td><td class="wrap">${escapeHtml(it.description)}</td>
+      tr.innerHTML = `<td>${idx + 1}</td><td>${escapeHtml(it.part_no)}</td><td class="wrap">${escapeHtml(it.description)}</td>
         <td>${escapeHtml(it.re_model || "-")}</td><td>${fmtMoney(it.mrp)}</td><td>${fmtMoney(it.rate)}</td>
         <td>${fmtNum(it.gst_percent)}%</td>
         <td>${low ? `<span class="badge badge-low">${fmtNum(it.stock_qty)}</span>` : fmtNum(it.stock_qty)}</td>
@@ -645,7 +684,7 @@
     inventorySearchTimer = setTimeout(() => loadInventory(), 300);
   });
 
-  function openAddItemModal(prefill) {
+  function openAddItemModal(prefill, onCreated) {
     const p = prefill || {};
     openModal({
       title: "Add Inventory Item",
@@ -676,7 +715,7 @@
           const description = modal.querySelector("#i-desc").value.trim();
           if (!part_no || !description) { showToast("Part No and Description are required", true); return; }
           try {
-            await api("/api/inventory", {
+            const item = await api("/api/inventory", {
               method: "POST",
               json: {
                 part_no, description,
@@ -689,8 +728,12 @@
                 source: prefill ? "scan_ocr" : "manual",
               },
             });
-            showToast(`${part_no} added to inventory`);
             close();
+            if (onCreated) {
+              onCreated(item);
+            } else {
+              showToast(`${part_no} added to inventory`);
+            }
             loadInventory();
           } catch (e) { showToast(e.message, true); }
         });
@@ -769,7 +812,7 @@
     }, "This part isn't a match to a known code yet? We'll help you add it from the label photo.");
   });
 
-  function openOcrCaptureModal(scannedCode) {
+  function openOcrCaptureModal(scannedCode, onCreated) {
     openModal({
       title: "New Part - Capture Label",
       bodyHtml: `<p>Code <b>${escapeHtml(scannedCode)}</b> isn't in inventory yet. Take a clear, well-lit photo of
@@ -779,7 +822,7 @@
         <p id="ocr-status" style="font-size:13px;color:#888;margin-top:8px;"></p>`,
       footerHtml: `<button class="btn btn-outline" id="ocr-skip">Enter Manually</button>`,
       onMount(modal, close) {
-        modal.querySelector("#ocr-skip").addEventListener("click", () => { close(); openAddItemModal({ barcode: scannedCode }); });
+        modal.querySelector("#ocr-skip").addEventListener("click", () => { close(); openAddItemModal({ barcode: scannedCode }, onCreated); });
         modal.querySelector("#ocr-photo").addEventListener("change", async (e) => {
           const file = e.target.files[0];
           if (!file) return;
@@ -809,7 +852,7 @@
               barcode: scannedCode,
               raw_text_hint: true,
               raw_text: result.raw_text || "",
-            });
+            }, onCreated);
           } catch (err) {
             status.style.color = "#d92d20";
             status.textContent = "Couldn't read the label - please try another photo or enter details manually.";
@@ -855,10 +898,11 @@
   function renderCustomersTable(list) {
     const tbody = document.querySelector("#customers-table tbody");
     tbody.innerHTML = "";
-    list.forEach((c) => {
+    document.getElementById("customers-count").textContent = `${list.length} customer${list.length === 1 ? "" : "s"}`;
+    list.forEach((c, idx) => {
       const tr = document.createElement("tr");
       tr.style.cursor = "pointer";
-      tr.innerHTML = `<td>${escapeHtml(c.name)}</td><td>${escapeHtml(c.phone || "-")}</td>
+      tr.innerHTML = `<td>${idx + 1}</td><td>${escapeHtml(c.name)}</td><td>${escapeHtml(c.phone || "-")}</td>
         <td>${escapeHtml(c.bike_model || "-")} ${c.bike_reg_no ? "(" + escapeHtml(c.bike_reg_no) + ")" : ""}</td>
         <td>${c.invoice_count}</td><td>${fmtMoney(c.outstanding)}</td>`;
       tr.addEventListener("click", () => openCustomerDetail(c.id));

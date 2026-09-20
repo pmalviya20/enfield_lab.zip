@@ -47,6 +47,12 @@
 <!-- ===================== APP SHELL ===================== -->
 <div id="app-shell" class="app-shell" hidden>
 
+  <!-- Thin hit-zone along the left edge that claims the swipe-to-open
+       gesture for the drawer (touch-action: none, set in CSS) so the
+       browser's own back-navigation swipe and horizontal rubber-band
+       bounce don't fire at the same time. -->
+  <div id="drawer-edge-swipe" class="drawer-edge-swipe"></div>
+
   <!-- Backdrop for drawer -->
   <div id="drawer-backdrop" class="drawer-backdrop"></div>
 
@@ -140,9 +146,10 @@
       </div>
       <div id="upload-result" class="banner" hidden></div>
       <div class="card">
+        <div class="card-header"><span id="inventory-count">0 parts</span></div>
         <div class="table-wrap">
           <table class="data-table" id="inventory-table">
-            <thead><tr><th>Part No</th><th>Description</th><th>RE Model</th><th>MRP</th><th>Rate</th><th>GST%</th><th>Stock</th><th></th></tr></thead>
+            <thead><tr><th>Sr No</th><th>Part No</th><th>Description</th><th>RE Model</th><th>MRP</th><th>Rate</th><th>GST%</th><th>Stock</th><th></th></tr></thead>
             <tbody></tbody>
           </table>
         </div>
@@ -155,9 +162,10 @@
         <button class="btn btn-primary" id="add-customer-btn">+ Add Customer</button>
       </div>
       <div class="card">
+        <div class="card-header"><span id="customers-count">0 customers</span></div>
         <div class="table-wrap">
           <table class="data-table" id="customers-table">
-            <thead><tr><th>Name</th><th>Phone</th><th>Bike</th><th>Invoices</th><th>Outstanding</th></tr></thead>
+            <thead><tr><th>Sr No</th><th>Name</th><th>Phone</th><th>Bike</th><th>Invoices</th><th>Outstanding</th></tr></thead>
             <tbody></tbody>
           </table>
         </div>
